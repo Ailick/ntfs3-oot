@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  *
- * Copyright (C) 2019-2020 Paragon Software GmbH, All rights reserved.
+ * Copyright (C) 2019-2021 Paragon Software GmbH, All rights reserved.
  *
  */
 
@@ -695,7 +695,6 @@ static int ntfs_readpage(struct file *file, struct page *page)
 	return mpage_readpage(page, ntfs_get_block);
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
 static void ntfs_readahead(struct readahead_control *rac)
 {
 	struct address_space *mapping = rac->mapping;
@@ -725,22 +724,6 @@ static void ntfs_readahead(struct readahead_control *rac)
 
 	mpage_readahead(rac, ntfs_get_block);
 }
-#else
-static int ntfs_readpages(struct file *file, struct address_space *mapping,
-		struct list_head *pages, unsigned int nr_pages)
-{
-	struct inode *inode = mapping->host;
-	struct ntfs_inode *ni = ntfs_i(inode);
-
-	if (is_resident(ni))
-		return 0;
-
-	if (is_compressed(ni))
-		return 0;
-
-	return mpage_readpages(mapping, pages, nr_pages, ntfs_get_block);
-}
-#endif
 
 static int ntfs_get_block_direct_IO_R(struct inode *inode, sector_t iblock,
 				      struct buffer_head *bh_result, int create)
@@ -1235,6 +1218,13 @@ int ntfs_create_inode(struct inode *dir, struct dentry *dentry,
 		/* use parent's directory attributes */
 		fa = dir_ni->std_fa | FILE_ATTRIBUTE_DIRECTORY |
 		     FILE_ATTRIBUTE_ARCHIVE;
+		/*
+		 * By default child directory inherits parent attributes
+		 * root directory is hidden + system
+		 * Make an exception for children in root
+		 */
+		if (dir->i_ino == MFT_REC_ROOT)
+			fa &= ~(FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
 	} else if (is_link) {
 		/* It is good idea that link should be the same type (file/dir) as target */
 		fa = FILE_ATTRIBUTE_REPARSE_POINT;
@@ -2052,11 +2042,7 @@ const struct inode_operations ntfs_link_inode_operations = {
 
 const struct address_space_operations ntfs_aops = {
 	.readpage = ntfs_readpage,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
 	.readahead = ntfs_readahead,
-#else
-	.readpages = ntfs_readpages,
-#endif
 	.writepage = ntfs_writepage,
 	.writepages = ntfs_writepages,
 	.write_begin = ntfs_write_begin,
@@ -2067,9 +2053,5 @@ const struct address_space_operations ntfs_aops = {
 
 const struct address_space_operations ntfs_aops_cmpr = {
 	.readpage = ntfs_readpage,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
 	.readahead = ntfs_readahead,
-#else
-	.readpages = ntfs_readpages,
-#endif
 };
